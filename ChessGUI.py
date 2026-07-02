@@ -171,6 +171,7 @@ HTML = r"""<!doctype html>
 
     button:hover:enabled { background: #394757; }
     button.active { background: var(--accent); color: #1f252b; border-color: var(--accent); }
+    button.loading { background: var(--blue); border-color: var(--blue); color: #ffffff; }
     button:disabled { opacity: 0.45; cursor: default; }
 
     .wide { grid-column: 1 / -1; }
@@ -252,8 +253,38 @@ HTML = r"""<!doctype html>
     let state = null;
     let selected = null;
     let thinking = false;
+    let loadingButtonId = null;
+    const controlIds = [
+      "newGame", "undo", "white", "black", "depthDown", "depthUp",
+      "timeDown", "timeUp", "gpu"
+    ];
 
-    async function api(path, body = null) {
+    function setControlsDisabled(disabled) {
+      for (const id of controlIds) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = disabled;
+      }
+    }
+
+    function beginLoading(message, buttonId = null) {
+      thinking = true;
+      selected = null;
+      loadingButtonId = buttonId;
+      if (state) render();
+      document.getElementById("status").textContent = message;
+      if (buttonId) {
+        const button = document.getElementById(buttonId);
+        button.classList.add("loading");
+        button.textContent = "Thinking...";
+      }
+      setControlsDisabled(true);
+    }
+
+    async function api(path, body = null, loadingMessage = null, buttonId = null) {
+      if (loadingMessage) {
+        beginLoading(loadingMessage, buttonId);
+        await new Promise(requestAnimationFrame);
+      }
       const options = body ? {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -262,6 +293,7 @@ HTML = r"""<!doctype html>
       const response = await fetch(path, options);
       state = await response.json();
       thinking = false;
+      loadingButtonId = null;
       selected = null;
       render();
     }
@@ -313,9 +345,7 @@ HTML = r"""<!doctype html>
         render();
         return;
       }
-      thinking = true;
-      document.getElementById("status").textContent = "Bot is thinking.";
-      api("/api/move", { move });
+      api("/api/move", { move }, "Bot is thinking.");
     }
 
     function renderBoard() {
@@ -377,17 +407,47 @@ HTML = r"""<!doctype html>
       document.getElementById("backend").textContent = state.backend;
       document.getElementById("status").textContent = thinking ? "Bot is thinking." : state.message;
 
+      document.getElementById("newGame").textContent = "New Game";
+      document.getElementById("white").textContent = "White";
+      document.getElementById("black").textContent = "Black";
+      document.getElementById("depthDown").textContent = "- Depth";
+      document.getElementById("depthUp").textContent = "+ Depth";
+      document.getElementById("timeDown").textContent = "- Time";
+      document.getElementById("timeUp").textContent = "+ Time";
       document.getElementById("white").classList.toggle("active", state.humanColor === "white");
       document.getElementById("black").classList.toggle("active", state.humanColor === "black");
       document.getElementById("gpu").classList.toggle("active", state.useGpu);
       document.getElementById("gpu").textContent = state.useGpu ? "GPU: On" : "GPU: Off";
       document.getElementById("undo").disabled = thinking || state.history.length === 0;
+      for (const id of controlIds) {
+        const button = document.getElementById(id);
+        if (!button) continue;
+        button.disabled = thinking || (id === "undo" && state.history.length === 0);
+        if (id !== loadingButtonId) button.classList.remove("loading");
+      }
+      if (loadingButtonId) {
+        const button = document.getElementById(loadingButtonId);
+        button.classList.add("loading");
+        button.textContent = "Thinking...";
+      }
     }
 
-    document.getElementById("newGame").onclick = () => api("/api/new", {});
+    document.getElementById("newGame").onclick = () => {
+      if (state && state.humanColor === "black") {
+        api("/api/new", {}, "New game started. Bot is making the first move.", "newGame");
+      } else {
+        api("/api/new", {});
+      }
+    };
     document.getElementById("undo").onclick = () => api("/api/undo", {});
     document.getElementById("white").onclick = () => api("/api/settings", { humanColor: "white" });
-    document.getElementById("black").onclick = () => api("/api/settings", { humanColor: "black" });
+    document.getElementById("black").onclick = () => {
+      if (state && state.humanColor !== "black") {
+        api("/api/settings", { humanColor: "black" }, "Starting as Black. Bot is making the first move.", "black");
+      } else {
+        api("/api/settings", { humanColor: "black" });
+      }
+    };
     document.getElementById("depthDown").onclick = () => api("/api/settings", { depth: Math.max(1, state.depth - 1) });
     document.getElementById("depthUp").onclick = () => api("/api/settings", { depth: Math.min(10, state.depth + 1) });
     document.getElementById("timeDown").onclick = () => api("/api/settings", { timeLimit: Math.max(0.5, state.timeLimit - 0.5) });
